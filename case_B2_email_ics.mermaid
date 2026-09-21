@@ -1,0 +1,41 @@
+flowchart LR
+  %% Case B2 - Email and ICS only. No calendar API, no tokens.
+  %% Edge numbers = lifecycle steps. Solid = works. Dashed = partial or conditional.
+
+  subgraph ATS["ATS backend"]
+    SCH["Scheduling service<br/>slots from manual availability<br/>or an external booking page"]
+    STORE["Event store<br/>UID, SEQUENCE, PARTSTAT per attendee"]
+    ICS["iCalendar builder<br/>RFC 5545 VEVENT in RFC 6047 iMIP message"]
+    SMTP["Outbound mail<br/>text/calendar method=REQUEST or CANCEL<br/>SPF, DKIM, DMARC aligned sender"]
+    INB["Inbound mail parser<br/>method=REPLY, ATTENDEE PARTSTAT"]
+    LINK["Video link source<br/>only via a B1 or B3 API path, else none"]
+    NOAPI["No calendar or free/busy API in this case"]
+  end
+
+  subgraph INT["Interviewer mailbox - Google or M365"]
+    IMAIL["Mail client"]
+    ICAL["Interviewer calendar<br/>auto-add depends on client setting"]
+  end
+
+  subgraph CAND["Candidate mailbox - any provider"]
+    CMAIL["Mail client"]
+    CCAL["Candidate calendar"]
+  end
+
+  SCH -.->|"1 NOT POSSIBLE - availability read"| NOAPI
+  SCH --> STORE
+  STORE --> ICS
+  LINK -.->|"2 joinUrl into LOCATION or DESCRIPTION, if any"| ICS
+  ICS --> SMTP
+
+  SMTP -->|"3 iMIP REQUEST, ORGANIZER=ats, ATTENDEE RSVP=TRUE"| IMAIL
+  SMTP -->|"3 iMIP REQUEST + add-to-calendar links"| CMAIL
+  IMAIL -.->|"3 render or auto-add"| ICAL
+  CMAIL -.->|"3 render or auto-add"| CCAL
+
+  IMAIL -->|"4 iMIP REPLY, PARTSTAT ACCEPTED DECLINED TENTATIVE"| INB
+  CMAIL -->|"4 iMIP REPLY"| INB
+  INB --> STORE
+
+  SCH -->|"5 same UID, SEQUENCE+1 REQUEST or METHOD CANCEL"| ICS
+  SCH -.->|"6 reminder emails, manual no-show"| SMTP

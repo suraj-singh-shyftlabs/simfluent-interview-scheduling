@@ -1,0 +1,62 @@
+flowchart LR
+  %% Case B1 - Platform-owned organizer account. No interviewer token.
+  %% Edge numbers = lifecycle steps. Solid = works. Dashed = partial or conditional.
+
+  subgraph ATS["ATS backend"]
+    SYS["System account credential<br/>refresh token of scheduler@ user or mailbox"]
+    SCH["Scheduling service"]
+    WH["Notification receiver"]
+  end
+
+  subgraph G["Google Workspace"]
+    GSYS["System Workspace user<br/>scheduler@ats.example - ATS-owned<br/>or scheduler@customer.example - customer-owned"]
+    GCAL["Calendar API v3<br/>calendarId = system user"]
+    GMEET["Meet link<br/>organizer = system user"]
+    GWATCH["events.watch on system calendar"]
+  end
+
+  subgraph M["Microsoft 365"]
+    MSYS["System mailbox<br/>scheduler@ats.example - ATS-owned<br/>or scheduler@customer.example - customer-owned"]
+    MCAL["Graph /users/sys/events"]
+    MOM["Graph /users/sys/onlineMeetings<br/>app-only path, cloud-comms ApplicationAccessPolicy"]
+    MTEAMS["Teams link<br/>organizer = system mailbox"]
+    MSUB["Graph subscription on system mailbox"]
+  end
+
+  subgraph INT["Interviewer - never authorizes"]
+    ICAL["Interviewer calendar<br/>attendee only, not organizer"]
+  end
+
+  subgraph CAND["Candidate - external"]
+    CMAIL["Candidate mailbox"]
+  end
+
+  GSYS --- SYS
+  MSYS --- SYS
+  SYS -->|"0 token as system identity"| SCH
+
+  SCH -.->|"1 freebusy.query, needs shared free/busy"| GCAL
+  SCH -.->|"1 getSchedule, needs org free/busy sharing"| MCAL
+
+  SCH -->|"2 events.insert as system user, conferenceDataVersion=1"| GCAL
+  GCAL --> GMEET
+  SCH -->|"2 POST events as system mailbox, isOnlineMeeting=true"| MCAL
+  MCAL --> MTEAMS
+  SCH -.->|"2 alt onlineMeetings, then attach joinUrl"| MOM
+  MOM -.-> MTEAMS
+
+  GCAL -->|"3 invite, organizer shown = scheduler@"| ICAL
+  MCAL -->|"3 invite, organizer shown = scheduler@"| ICAL
+  GCAL -->|"3 iMIP REQUEST from scheduler@"| CMAIL
+  MCAL -->|"3 iMIP REQUEST from scheduler@"| CMAIL
+
+  ICAL -->|"4 accept, decline, tentative"| GCAL
+  ICAL -->|"4 accept, decline, tentative, propose"| MCAL
+  CMAIL -->|"4 iMIP REPLY"| GCAL
+  CMAIL -->|"4 iMIP REPLY"| MCAL
+  GCAL --> GWATCH --> WH
+  MCAL --> MSUB --> WH
+  WH --> SCH
+
+  SCH -->|"5 patch or delete as organizer"| GCAL
+  SCH -->|"5 PATCH or cancel as organizer"| MCAL

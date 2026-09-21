@@ -1,0 +1,68 @@
+flowchart LR
+  %% Case A - Interviewer OAuth. Delegated per-user token held by the ATS.
+  %% Edge numbers = lifecycle steps. Solid = works. Dashed = partial or conditional.
+
+  subgraph INT["Interviewer"]
+    IB["Browser"]
+    ICAL["Interviewer calendar<br/>organizer = interviewer, full edit"]
+  end
+
+  subgraph ATS["ATS backend"]
+    OAUTHC["OAuth client<br/>Google Cloud project or Entra app registration"]
+    TOK["Token vault<br/>encrypted refresh token per interviewer"]
+    SCH["Scheduling service<br/>recruiter slot picker or candidate self-schedule"]
+    WH["Notification receiver<br/>signature check, syncToken or deltaLink state"]
+    MAIL["Outbound mail<br/>SPF, DKIM, DMARC"]
+  end
+
+  subgraph G["Google Workspace"]
+    GCONS["Consent screen<br/>calendar.events + calendar.freebusy<br/>sensitive scopes, app verification"]
+    GCAL["Calendar API v3<br/>calendarId = primary"]
+    GMEET["Google Meet<br/>conferenceData.createRequest hangoutsMeet"]
+    GWATCH["events.watch channel"]
+  end
+
+  subgraph M["Microsoft 365"]
+    MCONS["Entra consent<br/>delegated Calendars.ReadWrite + OnlineMeetings.ReadWrite"]
+    MCAL["Graph /me/events"]
+    MTEAMS["Teams<br/>isOnlineMeeting = true<br/>onlineMeetingProvider = teamsForBusiness"]
+    MSUB["Graph /subscriptions + delta"]
+  end
+
+  subgraph CAND["Candidate - external, any provider"]
+    CMAIL["Candidate mailbox"]
+  end
+
+  IB -->|"0 consent, once per interviewer"| GCONS
+  IB -->|"0 consent, once per interviewer"| MCONS
+  GCONS -->|"0 auth code, refresh token"| OAUTHC
+  MCONS -->|"0 auth code, refresh token"| OAUTHC
+  OAUTHC --> TOK
+  TOK -->|"short-lived access token"| SCH
+
+  SCH -->|"1 freebusy.query"| GCAL
+  SCH -->|"1 getSchedule or findMeetingTimes"| MCAL
+
+  SCH -->|"2 events.insert, conferenceDataVersion=1"| GCAL
+  GCAL -->|"2 async conference create"| GMEET
+  SCH -->|"2 POST /me/events, isOnlineMeeting=true"| MCAL
+  MCAL -->|"2 Teams join link"| MTEAMS
+
+  GCAL -->|"3 event on own calendar"| ICAL
+  MCAL -->|"3 event on own calendar"| ICAL
+  GCAL -->|"3 iMIP REQUEST, sendUpdates=all"| CMAIL
+  MCAL -->|"3 iMIP REQUEST via Exchange"| CMAIL
+
+  CMAIL -->|"4 iMIP REPLY"| GCAL
+  CMAIL -->|"4 iMIP REPLY or new time proposal"| MCAL
+  GCAL -->|"4 responseStatus change"| GWATCH
+  GWATCH -->|"4 push"| WH
+  MCAL -->|"4 attendee status change"| MSUB
+  MSUB -->|"4 change notification"| WH
+  WH --> SCH
+
+  SCH -->|"5 events.patch or delete, sendUpdates=all"| GCAL
+  SCH -->|"5 PATCH or cancel"| MCAL
+
+  SCH -.->|"6 ATS reminders, manual no-show"| MAIL
+  MAIL -.-> CMAIL
